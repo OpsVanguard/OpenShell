@@ -12,6 +12,7 @@ name = "navigator"
 path = "src/main.rs"
 
 [dependencies]
+navigator-bootstrap = { path = "../navigator-bootstrap" }
 navigator-core = { path = "../navigator-core" }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
@@ -26,6 +27,12 @@ tonic = { workspace = true }
 clap = { workspace = true }
 indicatif = { workspace = true }
 owo-colors = { workspace = true }
+
+# HTTP client (health fallback)
+bytes = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 
 # Error handling
 miette = { workspace = true }

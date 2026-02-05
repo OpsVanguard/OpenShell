@@ -1,13 +1,8 @@
 # Navigator mise configuration
 # See https://mise.jdx.dev/ for documentation
 
-experimental_monorepo_root = true
-
 [settings]
 experimental = true
-
-[monorepo]
-config_roots = ["docker", "kube"]
 
 [tools]
 python = "3.12"
@@ -15,8 +10,6 @@ rust = "stable"
 kubectl = "latest"
 uv = "latest"
 protoc = "29"
-skaffold = "latest"
-k3d = "latest"
 helm = "latest"
 sccache = "latest"
 
@@ -65,7 +58,7 @@ run = "cargo fmt --all -- --check"
 
 [tasks.test]
 description = "Run all tests (Rust + Python)"
-depends = ["test:rust", "test:python", "test:e2e:sandbox"]
+depends = ["test:rust", "test:python"]
 
 [tasks."test:rust"]
 description = "Run Rust tests"
@@ -75,21 +68,6 @@ run = "cargo test --workspace"
 description = "Run Python tests"
 env = { UV_NO_SYNC = "1" }
 run = "uv run pytest python/"
-
-[tasks."test:e2e:sandbox"]
-description = "Run sandbox e2e tests via skaffold verify"
-run = """
-#!/usr/bin/env bash
-set -euo pipefail
-
-BUILD_FILE=".skaffold-build.json"
-
-mise -C kube run start
-export DOCKER_BUILDKIT=1
-skaffold build -q --file-output="${BUILD_FILE}" -p e2e-sandbox
-skaffold deploy --build-artifacts="${BUILD_FILE}" --load-images -p e2e-sandbox
-skaffold verify --build-artifacts="${BUILD_FILE}" -p e2e-sandbox
-"""
 
 # ============================================================================
 # Python Tasks
@@ -117,32 +95,12 @@ description = "Type check Python code with ty"
 run = "uv run ty check python/"
 
 # ============================================================================
-# Server Tasks
-# ============================================================================
-
-[tasks.server]
-description = "Run the Navigator server"
-run = "cargo run -p navigator-server --"
-
-[tasks."server:release"]
-description = "Run the Navigator server in release mode"
-run = "cargo run -p navigator-server --release --"
-
-# ============================================================================
-# CLI Tasks
-# ============================================================================
-
-[tasks.cli]
-description = "Run the Navigator CLI"
-run = "cargo run -p navigator-cli --"
-
-# ============================================================================
 # Sandbox Tasks
 # ============================================================================
 
 [tasks.sandbox]
 description = "Run the sandbox container with an interactive shell"
-depends = ["//docker:build:factory"]
+depends = ["docker:build:sandbox"]
 run = """
 TTY_FLAG=""
 if [ -t 0 ]; then
@@ -160,7 +118,7 @@ docker run ${TTY_FLAG} \
   -e HOME=/sandbox \
   -w /sandbox \
   -e NAVIGATOR_SANDBOX_POLICY=/var/navigator/policy.yaml \
-  navigator-factory -i "${CMD[@]}"
+  navigator-sandbox:${IMAGE_TAG:-dev} -i "${CMD[@]}"
 """
 
 # ============================================================================
@@ -169,35 +127,160 @@ docker run ${TTY_FLAG} \
 
 [tasks."helm:lint"]
 description = "Lint the navigator helm chart"
-run = "helm lint helm/navigator"
+run = "helm lint deploy/helm/navigator"
 
 # ============================================================================
-# Kubernetes Tasks
+# Docker Build Tasks
 # ============================================================================
 
-[tasks."kube:start"]
-description = "Start/create k3d cluster with registry"
-run = "mise -C kube run start"
+[tasks."docker:build"]
+description = "Build all Docker images"
+depends = [
+  "docker:build:sandbox",
+  "docker:build:server",
+  "docker:build:cluster",
+]
 
-[tasks."kube:stop"]
-description = "Stop k3d cluster (preserves state)"
-run = "mise -C kube run stop"
+[tasks."docker:build:sandbox"]
+description = "Build the sandbox Docker image"
+env = { DOCKER_BUILDKIT = "1" }
+run = """
+docker buildx build \
+  -f deploy/docker/Dockerfile.sandbox \
+  -t navigator-sandbox:${IMAGE_TAG:-dev} \
+  --build-arg RUST_BUILD_PROFILE=${RUST_BUILD_PROFILE:-debug} \
+  --load \
+  .
+"""
 
-[tasks."kube:destroy"]
-description = "Delete k3d cluster completely"
-run = "mise -C kube run destroy"
+[tasks."docker:build:server"]
+description = "Build the server Docker image"
+env = { DOCKER_BUILDKIT = "1" }
+run = """
+docker buildx build \
+  -f deploy/docker/Dockerfile.server \
+  -t navigator-server:${IMAGE_TAG:-dev} \
+  --load \
+  .
+"""
 
-[tasks."kube:deploy"]
-description = "Build and deploy via skaffold"
-run = "mise -C kube run deploy"
+[tasks."docker:build:cluster"]
+description = "Build the airgapped k3s cluster image (includes sandbox + server)"
+depends = ["docker:build:sandbox", "docker:build:server"]
+env = { DOCKER_BUILDKIT = "1" }
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
 
-[tasks."kube:deploy-svc"]
-description = "Build images and restart services (no helm/config changes)"
-run = "mise -C kube run deploy-svc"
+K3S_VERSION=${K3S_VERSION:-v1.29.8-k3s1}
+IMAGE_TAG=${IMAGE_TAG:-dev}
+ENVOY_GATEWAY_VERSION=${ENVOY_GATEWAY_VERSION:-v1.5.8}
 
-[tasks."kube:dev"]
-description = "Dev mode with hot reload via skaffold"
-run = "mise -C kube run dev"
+# Create build directories
+mkdir -p deploy/docker/.build/images
+mkdir -p deploy/docker/.build/charts
+
+# Export images as Docker tarballs for airgap deployment
+echo "Exporting navigator-sandbox..."
+docker save navigator-sandbox:${IMAGE_TAG} -o deploy/docker/.build/images/navigator-sandbox.tar
+
+echo "Exporting navigator-server..."
+docker save navigator-server:${IMAGE_TAG} -o deploy/docker/.build/images/navigator-server.tar
+
+# Package navigator helm chart
+echo "Packaging navigator helm chart..."
+helm package deploy/helm/navigator -d deploy/docker/.build/charts/
+
+# Download envoy-gateway helm chart for airgap deployment
+# This chart includes Gateway API CRDs, so we don't need a separate CRDs chart
+echo "Downloading gateway-helm chart..."
+helm pull oci://docker.io/envoyproxy/gateway-helm \
+  --version ${ENVOY_GATEWAY_VERSION} \
+  --destination deploy/docker/.build/charts/
+
+# Build cluster image
+echo "Building cluster image..."
+docker buildx build \
+  -f deploy/docker/Dockerfile.cluster \
+  -t navigator-cluster:${IMAGE_TAG} \
+  --build-arg K3S_VERSION=${K3S_VERSION} \
+  --load \
+  .
+
+echo "Done! Cluster image: navigator-cluster:${IMAGE_TAG}"
+"""
+
+# ============================================================================
+# Cluster Tasks
+# ============================================================================
+
+[tasks.cluster]
+description = "Build and deploy local k3s cluster with Navigator"
+depends = ["docker:build:cluster"]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+CLUSTER_NAME=${CLUSTER_NAME:-navigator}
+
+# Deploy the cluster using the locally built image
+nav cluster admin deploy --name "${CLUSTER_NAME}" --update-kube-config
+
+echo ""
+echo "Cluster '${CLUSTER_NAME}' is ready."
+echo "KUBECONFIG has been updated."
+"""
+
+[tasks."cluster:deploy"]
+description = "Deploy changes to existing cluster (rebuilds images and upgrades helm release)"
+env = { DOCKER_BUILDKIT = "1" }
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+CLUSTER_NAME=${CLUSTER_NAME:-navigator}
+CONTAINER_NAME="navigator-cluster-${CLUSTER_NAME}"
+IMAGE_TAG=${IMAGE_TAG:-dev}
+
+# Check if cluster container is running
+if ! docker ps -q --filter "name=${CONTAINER_NAME}" | grep -q .; then
+  echo "Error: Cluster container '${CONTAINER_NAME}' is not running."
+  echo "Start the cluster first with: mise run cluster"
+  exit 1
+fi
+
+echo "Building navigator-server..."
+docker buildx build \
+  -f deploy/docker/Dockerfile.server \
+  -t navigator-server:${IMAGE_TAG} \
+  --load \
+  .
+
+echo "Building navigator-sandbox..."
+docker buildx build \
+  -f deploy/docker/Dockerfile.sandbox \
+  -t navigator-sandbox:${IMAGE_TAG} \
+  --load \
+  .
+
+echo "Importing images into k3s cluster..."
+docker save navigator-server:${IMAGE_TAG} | docker exec -i ${CONTAINER_NAME} ctr -n k8s.io images import -
+docker save navigator-sandbox:${IMAGE_TAG} | docker exec -i ${CONTAINER_NAME} ctr -n k8s.io images import -
+
+echo "Upgrading helm release..."
+helm upgrade navigator deploy/helm/navigator \
+  --namespace navigator \
+  --set image.repository=navigator-server \
+  --set image.tag=${IMAGE_TAG} \
+  --set server.sandboxImage=navigator-sandbox:${IMAGE_TAG} \
+  --wait
+
+echo "Restarting deployment to pick up new images..."
+kubectl rollout restart deployment/navigator -n navigator
+kubectl rollout status deployment/navigator -n navigator
+
+echo "Deploy complete!"
+"""
 
 # ============================================================================
 # Development Tasks

@@ -177,4 +177,6 @@ secrets/
 credentials/
 
 kubeconfig
-.skaffold-build.json
+
+# Docker build artifacts (image tarballs, packaged helm charts)
+deploy/docker/.build/

@@ -1,8 +1,15 @@
 //! CLI command implementations.
 
+use bytes::Bytes;
 use futures::StreamExt;
+use http_body_util::Full;
+use hyper::{Request, StatusCode};
+use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use miette::{IntoDiagnostic, Result, WrapErr};
+use navigator_bootstrap::{
+    DeployOptions, default_local_kubeconfig_path, print_kubeconfig, update_local_kubeconfig,
+};
 use navigator_core::proto::{
     CreateSandboxRequest, DeleteSandboxRequest, GetSandboxRequest, HealthRequest,
     LandlockCompatibility, ListSandboxesRequest, NetworkMode, Sandbox, SandboxPhase, SandboxPolicy,
@@ -128,6 +135,7 @@ fn format_phase_label(phase: &str) -> String {
 }
 
 /// Show cluster status.
+#[allow(clippy::branches_sharing_code)]
 pub async fn cluster_status(server: &str) -> Result<()> {
     println!("{}", "Server Status".bold().cyan());
     println!();
@@ -142,16 +150,96 @@ pub async fn cluster_status(server: &str) -> Result<()> {
                 println!("  {} {}", "Version:".dimmed(), health.version);
             }
             Err(e) => {
-                println!("  {} {}", "Status:".dimmed(), "Error".red());
-                println!("  {} {}", "Error:".dimmed(), e);
+                if let Some(status) = http_health_check(server).await? {
+                    if status.is_success() {
+                        println!("  {} {}", "Status:".dimmed(), "Connected (HTTP)".yellow());
+                        println!("  {} {}", "HTTP: ".dimmed(), status);
+                        println!("  {} {}", "gRPC error:".dimmed(), e);
+                    } else {
+                        println!("  {} {}", "Status:".dimmed(), "Error".red());
+                        println!("  {} {}", "HTTP:".dimmed(), status);
+                        println!("  {} {}", "gRPC error:".dimmed(), e);
+                    }
+                } else {
+                    println!("  {} {}", "Status:".dimmed(), "Error".red());
+                    println!("  {} {}", "Error:".dimmed(), e);
+                }
             }
         },
         Err(e) => {
-            println!("  {} {}", "Status:".dimmed(), "Disconnected".red());
-            println!("  {} {}", "Error:".dimmed(), e);
+            if let Some(status) = http_health_check(server).await? {
+                if status.is_success() {
+                    println!("  {} {}", "Status:".dimmed(), "Connected (HTTP)".yellow());
+                    println!("  {} {}", "HTTP:".dimmed(), status);
+                    println!("  {} {}", "gRPC error:".dimmed(), e);
+                } else {
+                    println!("  {} {}", "Status:".dimmed(), "Disconnected".red());
+                    println!("  {} {}", "HTTP:".dimmed(), status);
+                    println!("  {} {}", "Error:".dimmed(), e);
+                }
+            } else {
+                println!("  {} {}", "Status:".dimmed(), "Disconnected".red());
+                println!("  {} {}", "Error:".dimmed(), e);
+            }
         }
     }
 
+    Ok(())
+}
+
+async fn http_health_check(server: &str) -> Result<Option<StatusCode>> {
+    let base = server.trim_end_matches('/');
+    let uri: hyper::Uri = format!("{base}/healthz").parse().into_diagnostic()?;
+    let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
+    let req = Request::builder()
+        .method("GET")
+        .uri(uri)
+        .body(Full::new(Bytes::new()))
+        .into_diagnostic()?;
+    let resp = client.request(req).await.into_diagnostic()?;
+    Ok(Some(resp.status()))
+}
+
+/// Provision or start a local cluster.
+pub async fn cluster_admin_deploy(
+    name: &str,
+    update_kube_config: bool,
+    get_kubeconfig: bool,
+) -> Result<()> {
+    eprintln!("Deploying cluster {name}...");
+    let options = DeployOptions::new(name);
+    let handle = navigator_bootstrap::deploy_cluster(options).await?;
+    eprintln!("Cluster {name} ready.");
+
+    if update_kube_config {
+        let target_path = default_local_kubeconfig_path()?;
+        update_local_kubeconfig(name, &target_path)?;
+        eprintln!("Updated kubeconfig at {}", target_path.display());
+    }
+
+    if get_kubeconfig {
+        print_kubeconfig(name)?;
+    }
+
+    eprintln!("Stored kubeconfig: {}", handle.kubeconfig_path().display());
+    Ok(())
+}
+
+/// Stop a local cluster.
+pub async fn cluster_admin_stop(name: &str) -> Result<()> {
+    eprintln!("Stopping cluster {name}...");
+    let handle = navigator_bootstrap::cluster_handle(name)?;
+    handle.stop().await?;
+    eprintln!("Cluster {name} stopped.");
+    Ok(())
+}
+
+/// Destroy a local cluster and its state.
+pub async fn cluster_admin_destroy(name: &str) -> Result<()> {
+    eprintln!("Destroying cluster {name}...");
+    let handle = navigator_bootstrap::cluster_handle(name)?;
+    handle.destroy().await?;
+    eprintln!("Cluster {name} destroyed.");
     Ok(())
 }
 

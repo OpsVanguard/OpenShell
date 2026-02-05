@@ -3,9 +3,9 @@
 replicaCount: 1
 
 image:
-  repository: registry.localhost:5000/navigator-server
+  repository: navigator-server
   pullPolicy: IfNotPresent
-  tag: ""
+  tag: "dev"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -49,7 +49,7 @@ server:
   sandboxNamespace: navigator
   dbUrl: "sqlite::memory:?cache=shared"
   initImage: "busybox:1.36"
-  sandboxImage: "registry.localhost:5000/navigator-factory:latest"
+  sandboxImage: "navigator-factory:dev"
   # gRPC endpoint for sandboxes to callback to Navigator (must be reachable from pods)
   grpcEndpoint: "http://navigator.navigator.svc.cluster.local:8080"
 

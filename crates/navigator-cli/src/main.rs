@@ -48,6 +48,44 @@ enum Commands {
 enum ClusterCommands {
     /// Show server status and information.
     Status,
+
+    /// Manage local development cluster lifecycle.
+    Admin {
+        #[command(subcommand)]
+        command: ClusterAdminCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ClusterAdminCommands {
+    /// Provision or start a local cluster.
+    Deploy {
+        /// Cluster name.
+        #[arg(long, default_value = "navigator")]
+        name: String,
+
+        /// Write stored kubeconfig into local kubeconfig.
+        #[arg(long)]
+        update_kube_config: bool,
+
+        /// Print stored kubeconfig to stdout.
+        #[arg(long)]
+        get_kubeconfig: bool,
+    },
+
+    /// Stop a local cluster (preserves state).
+    Stop {
+        /// Cluster name.
+        #[arg(long, default_value = "navigator")]
+        name: String,
+    },
+
+    /// Destroy a local cluster and its state.
+    Destroy {
+        /// Cluster name.
+        #[arg(long, default_value = "navigator")]
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -114,6 +152,21 @@ async fn main() -> Result<()> {
             ClusterCommands::Status => {
                 run::cluster_status(&cli.cluster).await?;
             }
+            ClusterCommands::Admin { command } => match command {
+                ClusterAdminCommands::Deploy {
+                    name,
+                    update_kube_config,
+                    get_kubeconfig,
+                } => {
+                    run::cluster_admin_deploy(&name, update_kube_config, get_kubeconfig).await?;
+                }
+                ClusterAdminCommands::Stop { name } => {
+                    run::cluster_admin_stop(&name).await?;
+                }
+                ClusterAdminCommands::Destroy { name } => {
+                    run::cluster_admin_destroy(&name).await?;
+                }
+            },
         },
         Some(Commands::Sandbox { command }) => match command {
             SandboxCommands::Create => {

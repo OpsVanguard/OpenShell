@@ -88,8 +88,8 @@ Implement Sandbox CRUD over gRPC in the Navigator service. Persist a Sandbox ent
 4. Watcher behavior unit test (mock event stream):
 - Added -> DB record updated with status.
 - Deleted -> DB record removed.
-5. E2E test via existing skaffold harness:
-- Deploy server and agent-sandbox CRD support, then exercise Create/Get/List/Delete over gRPC and verify status propagation.
+5. E2E test via local cluster:
+   - Deploy server and agent-sandbox CRD support using `mise run cluster`, then exercise Create/Get/List/Delete over gRPC and verify status propagation.
 
 **Assumptions and Defaults**
 - Create returns immediately after CRD creation, without waiting for Ready.

@@ -1,0 +1,39 @@
+# k3s cluster image with pre-loaded Navigator images and Helm charts
+#
+# This image is based on k3s and includes:
+# - Pre-built navigator-sandbox and navigator-server images as tarballs
+# - Packaged Navigator Helm chart
+# - HelmChart CRs for auto-deploying Gateway API, Envoy Gateway, and Navigator
+# - Custom entrypoint for DNS configuration in Docker environments
+#
+# The image tarballs and helm chart are built by the docker:build:cluster mise task
+# and placed in deploy/docker/.build/ before this Dockerfile is built.
+
+ARG K3S_VERSION=v1.29.8-k3s1
+FROM rancher/k3s:${K3S_VERSION}
+
+# Create directories for airgap images and manifests
+RUN mkdir -p /var/lib/rancher/k3s/agent/images \
+             /var/lib/rancher/k3s/server/manifests \
+             /var/lib/rancher/k3s/server/static/charts \
+             /etc/rancher/k3s \
+             /opt/navigator/manifests
+
+# Copy entrypoint script that configures DNS for Docker environments
+# This script detects the host gateway IP and configures CoreDNS to use it
+COPY deploy/docker/cluster-entrypoint.sh /usr/local/bin/cluster-entrypoint.sh
+RUN chmod +x /usr/local/bin/cluster-entrypoint.sh
+
+# Copy pre-built image tarballs for airgap deployment
+# These are created by the docker:build:cluster mise task using docker save
+COPY deploy/docker/.build/images/*.tar /var/lib/rancher/k3s/agent/images/
+
+# Copy packaged helm chart to static directory for serving via k3s API
+COPY deploy/docker/.build/charts/*.tgz /var/lib/rancher/k3s/server/static/charts/
+
+# Copy Kubernetes manifests to a persistent location that won't be overwritten by the volume mount.
+# The bootstrap code will copy these to /var/lib/rancher/k3s/server/manifests/ after cluster start.
+COPY deploy/kube/manifests/*.yaml /opt/navigator/manifests/
+
+# Use custom entrypoint that configures DNS before starting k3s
+ENTRYPOINT ["/usr/local/bin/cluster-entrypoint.sh"]

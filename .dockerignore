@@ -30,7 +30,6 @@ build
 
 # Kubernetes/local dev
 kubeconfig
-.skaffold-build.json
 
 # Caches
 .cache

@@ -22,4 +22,4 @@ See `CONTRIBUTING.md` for more information about developing and contributing to 
 
 ## Architecture
 
-See `architecture` for detailed architecture docs and design decisions.
+See `architecture/` for detailed architecture docs and design decisions.

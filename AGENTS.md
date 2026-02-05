@@ -2,6 +2,11 @@
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for instructions on how to perform common operations (building, testing, linting, running components).
 
+## Plans
+
+- Store plan documents in `architecture/plans`.
+- When asked to write a plan, write it there without asking for the location.
+
 ## Sandbox Infra Changes
 
 - If you change sandbox infrastructure, ensure `mise run sandbox` succeeds.

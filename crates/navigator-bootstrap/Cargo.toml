@@ -1,0 +1,20 @@
+[package]
+name = "navigator-bootstrap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bollard = "0.16"
+bytes = { workspace = true }
+futures = { workspace = true }
+miette = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+tar = "0.4"
+tokio = { workspace = true }
+
+[lints]
+workspace = true

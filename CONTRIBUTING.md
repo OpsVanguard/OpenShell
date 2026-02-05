@@ -11,14 +11,16 @@ curl https://mise.run | sh
 
 After installing `mise` be sure to activate the environment by running `mise activate` or [add it to your shell](https://mise.jdx.dev/getting-started.html).
 
-Shell instllation examples:
+Shell installation examples:
 
 Fish:
+
 ```bash
 echo '~/.local/bin/mise activate fish | source' >> ~/.config/fish/config.fish
 ```
 
 Zsh (Mac OS Default):
+
 ```bash
 echo 'eval "$(~/.local/bin/mise activate zsh)"' >> ~/.zshrc
 ```
@@ -37,14 +39,14 @@ mise build
 # Run all project tests
 mise test
 
-# Run the cluster agent
-mise run server
-
-# Run the CLI, this will build/run the cli from source
+# Run the CLI, this will build/run the cli from source (first run will be slow)
 nav --help
 
 # Run the sandbox
 mise run sandbox
+
+# Run the cluster
+mise run cluster
 ```
 
 ## Project Structure
@@ -54,9 +56,15 @@ crates/
 ├── navigator-core/      # Core library
 ├── navigator-server/    # Main gateway server, ingress for all operations
 ├── navigator-sandbox/   # Sandbox execution environment
+├── navigator-bootstrap/ # Local cluster bootstrap (Docker)
 └── navigator-cli/       # Command-line interface
 python/                  # Python bindings
 proto/                   # Protocol buffer definitions
+architecture/            # Architecture documentation and design plans
+deploy/
+├── docker/              # Dockerfiles and build artifacts
+├── helm/navigator/      # Navigator Helm chart
+└── kube/manifests/      # Kubernetes manifests for k3s auto-deploy
 ```
 
 ## Development Workflow
@@ -89,14 +97,15 @@ mise run clippy          # Run Clippy lints
 mise run python:fmt      # Format with ruff
 mise run python:lint     # Lint with ruff
 mise run python:typecheck # Type check with ty
+
+# Helm
+mise run helm:lint       # Lint the navigator helm chart
 ```
 
 ### Running Components
 
 ```bash
-mise run server          # Start the server
-mise run cli -- --help   # Run CLI with arguments
-mise run sandbox         # Run sandbox
+mise run sandbox         # Run sandbox container with interactive shell
 ```
 
 ### Git Hooks (Pre-commit)
@@ -111,29 +120,45 @@ mise generate git-pre-commit --write --task=pre-commit
 
 ### Kubernetes Development
 
-The project uses [k3d](https://k3d.io/) for local Kubernetes development. All required tools (k3d, kubectl, skaffold, helm) are managed by mise.
+The project uses the Navigator CLI to provision a local k3s-in-container cluster. Docker is the only external dependency for cluster bootstrap.
 
 ```bash
-mise run kube:start      # Create/start k3d cluster with local registry
-mise run kube:stop       # Stop cluster (preserves state)
-mise run kube:destroy    # Delete cluster completely
-
-mise run kube:deploy     # Build and deploy via skaffold
-mise run kube:dev        # Dev mode with hot reload
-mise run test:e2e:sandbox # Run sandbox e2e tests via skaffold verify
+mise run cluster          # Build and deploy local k3s cluster with Navigator
+mise run cluster:deploy   # Deploy changes to existing cluster (rebuilds images and upgrades helm release)
 ```
 
-The cluster exposes port 8080 for the server and includes a local registry at `localhost:5000`.
+The cluster exposes ports 80/443 for gateway traffic and 6443 for the Kubernetes API.
 
-The sandbox E2E task uses a Skaffold profile (`e2e-sandbox`) that loads images directly into the
-k3d cluster instead of pushing to a registry.
+Once the cluster is deployed. You can interact with the cluster using standard `nav` CLI commands.
+
+### Docker Build Tasks
+
+```bash
+mise run docker:build           # Build all Docker images
+mise run docker:build:sandbox   # Build the sandbox Docker image
+mise run docker:build:server    # Build the server Docker image
+mise run docker:build:cluster   # Build the airgapped k3s cluster image
+```
+
+### Python Development
+
+```bash
+mise run python:dev      # Install Python package in development mode (builds CLI binary)
+mise run python:build    # Build Python wheel with CLI binary
+```
+
+### Cleaning
+
+```bash
+mise run clean           # Clean build artifacts
+```
 
 ## Code Style
 
 - **Rust**: Formatted with `rustfmt`, linted with Clippy (pedantic + nursery)
-- **Python**: Formatted and linted with `ruff`, type-checked with `mypy --strict`
+- **Python**: Formatted and linted with `ruff`, type-checked with `ty`
 
-Run `mise run all` before committing to check everything.
+Run `mise run all` before committing to check everything (runs `fmt:check`, `clippy`, `test`, `python:lint`).
 
 ## Commit Messages
 
